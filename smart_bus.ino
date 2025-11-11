@@ -84,6 +84,8 @@ bool tripEnded = false;
 bool seatCheckActive = false;
 int totalStudentsOnBoard = 0;
 int buttonCount = 0;
+float scale[6] = {412.44,593.64,-3417.94,-1168.62,-1357.17,-155.75};
+
 
 
 /* =================== STUDENT DATA =================== */
@@ -157,8 +159,8 @@ void setup() {
   bool hxOK = true;
   for (int i = 0; i < NUM_STUDENTS; i++) {
     loadCells[i].begin(HX711_DOUT[i], HX711_SCK[i]);
-    loadCells[i].set_scale();
     loadCells[i].tare();
+    loadCells[i].set_scale(scale[i]);
     delay(50);
   }
   Serial.println(F("[OK] HX711 khoi tao hoan tat"));
@@ -227,8 +229,8 @@ void checkTripEnd() {
 
     for (int i = 0; i < NUM_STUDENTS; i++) {
       if (students[i].onboard) onboardCount++;
-      float w = loadCells[i].read_average(5);
-      if (w >= -200000 && w <= -100000) occupiedSeats++;
+      float w = loadCells[i].get_units(10);
+      if (w >= -200000 && w <= 0.5) occupiedSeats++;
     }
 
     Serial.print("[TRIP END] So HS con tren xe: "); Serial.println(onboardCount);
@@ -466,7 +468,7 @@ void seatCheckPoint() {
   int studentCount = 0;
 
   for (int i = 0; i < NUM_STUDENTS; i++) {
-    float w = loadCells[i].read_average(5);
+    float w = loadCells[i].get_units(10);
     if (w < -100000 && w > -200000) {
       students[i].seated = true;
       seatedCount++;
@@ -575,5 +577,4 @@ bool waitButtonHold(int pin) {
   }
   return false;
 }
-
 
