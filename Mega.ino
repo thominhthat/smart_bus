@@ -2,7 +2,7 @@
   KẾ HOẠCH A - Arduino Mega2560 (cập nhật logic tuần tự & Serial log chi tiết)
   - PN532 (UART, TX/RX)
   - 6 x HX711 (load cells)
-  - TFT ST7735 (SPI)
+  - TFT ST7735 (SPI) qua Aruino Nano
   - MAX7219 LED matrix (MD_Parola)
   - DFPlayer Mini (SoftwareSerial)
   - SIM800L
@@ -23,7 +23,7 @@
 #include <MD_MAX72xx.h>
 
 /* =================== PROTOTYPES =================== */
-void displayMessage(String msg);
+void sendTFT(String msg);
 void displayMatrix(String msg);
 void checkNFC();
 void checkNFC_GV();
@@ -42,12 +42,6 @@ void sendSMSTeacher(String phone, String msg);
 bool waitButtonHold(int pin);
 
 /* =================== PIN MAP =================== */
-// TFT (ST7735)
-#define TFT_CS 40
-#define TFT_RST 41
-#define TFT_DC 42
-Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
-
 // MAX7219
 #define MAX_DEVICES 4
 #define MD_PIN_DATA 51
@@ -120,13 +114,7 @@ void setup() {
   digitalWrite(BUZZER_PIN, HIGH);
   digitalWrite(FAN_PIN, LOW);
 
-  // TFT setup
-  tft.initR(INITR_BLACKTAB);
-  tft.setRotation(1);
-  tft.fillScreen(ST77XX_GREEN);
-  tft.setTextSize(2);
-  tft.setTextColor(ST77XX_BLACK);
-  displayMessage("Dang khoi dong...");
+  sendTFT("Dang khoi dong...");
 
   // LED Matrix
   matrix.begin();
@@ -168,11 +156,11 @@ void setup() {
   // Tổng kiểm tra phần cứng
   if (dfOK && pnOK && hxOK) {
     Serial.println(F("Tat ca thiet bi da san sang"));
-    displayMessage("Khoi dong OK");
+    sendTFT("Khoi dong OK");
     delay(1500);
-    displayMessage("Cho giao vien");
+    sendTFT("Cho giao vien");
   } else {
-    displayMessage("Loi phan cung!");
+    sendTFT("Loi phan cung!");
     Serial.println(F("Hay kiem tra lai ket noi phan cung!"));
     while (1);
   }
@@ -214,7 +202,7 @@ void checkTripEnd() {
     Serial.println("[TRIP END] Giao vien da xuong xe => Xac nhan den diem cuoi (truong).");
 
     Serial.println("[TRIP END] Bat PN532 de hoc sinh quet the xuong xe...");
-    displayMessage("Hoc sinh xuong xe");
+    sendTFT("Hoc sinh xuong xe");
     delay(1000);
     checkNFC_HS(); // <-- Thêm dấu ; ở đây
 
@@ -303,7 +291,7 @@ void checkTripEnd() {
     // Trường hợp 3: mọi thứ bình thường
     else {
       Serial.println("[TRIP END] Ket thuc hanh trinh an toan.");
-      displayMessage("Ket thuc: An toan");
+      sendTFT("Ket thuc: An toan");
     }
 
     Serial.println("[TRIP END] Hoan tat quy trinh ket thuc hanh trinh.");
@@ -331,7 +319,7 @@ void checkNFC() {
 
   if (id == teacherID) {
     teacherReady = !teacherReady;
-    displayMessage(teacherReady ? "Giao vien len xe" : "Giao vien xuong xe");
+    sendTFT(teacherReady ? "Giao vien len xe" : "Giao vien xuong xe");
     Serial.println(teacherReady ? "[GV] Len xe" : "[GV] Xuong xe");
     delay(3000);
     return;
@@ -341,7 +329,7 @@ void checkNFC() {
     if (students[i].id == id) {
       bool before = students[i].onboard;
       students[i].onboard = !students[i].onboard;
-      displayMessage(students[i].name + (students[i].onboard ? " len xe" : " xuong xe"));
+      sendTFT(students[i].name + (students[i].onboard ? " len xe" : " xuong xe"));
       Serial.println("[HS] " + students[i].name + (students[i].onboard ? " len xe" : " xuong xe"));
       delay(3000);
 
@@ -371,7 +359,7 @@ void checkNFC_GV() {
   buzz();
   if (id == teacherID) {
     teacherReady = !teacherReady;
-    displayMessage(teacherReady ? "Giao vien len xe" : "Giao vien xuong xe");
+    sendTFT(teacherReady ? "Giao vien len xe" : "Giao vien xuong xe");
     Serial.println(teacherReady ? "[GV] Len xe" : "[GV] Xuong xe");
     delay(3000);
     return;
@@ -398,7 +386,7 @@ void checkNFC_HS() {
     if (students[i].id == id) {
       bool before = students[i].onboard;
       students[i].onboard = !students[i].onboard;
-      displayMessage(students[i].name + (students[i].onboard ? " len xe" : " xuong xe"));
+      sendTFT(students[i].name + (students[i].onboard ? " len xe" : " xuong xe"));
       Serial.println("[HS] " + students[i].name + (students[i].onboard ? " len xe" : " xuong xe"));
       delay(3000);
       return;
@@ -423,17 +411,17 @@ void handleButtonLogic() {
   if (buttonCount == 1 && teacherReady) {
     tripStarted = true;
     Serial.println("[B1] Xac nhan bat dau hanh trinh don hoc sinh");
-    displayMessage("Bat dau don hoc sinh");
+    sendTFT("Bat dau don hoc sinh");
     seatCheckActive = false;
   }
   else if (buttonCount == 2 && tripStarted) {
     Serial.println("[B2] Diem don - Bat PN532 de quet the");
-    displayMessage("Diem don hoc sinh");
+    sendTFT("Diem don hoc sinh");
     seatCheckActive = false;
   }
   else if (buttonCount == 3 && tripStarted) {
     Serial.println("[B3] Ket thuc diem don - Kiem tra ghe sau 5s");
-    displayMessage("Kiem tra ghe...");
+    sendTFT("Kiem tra ghe...");
     delay(5000);
     seatCheckPoint();
     seatCheckActive = true;
@@ -460,7 +448,7 @@ void handleButtonLogic_GV() {
     tripStarted = true;
     buttonCount = 1;
     Serial.println("[B1] Xac nhan bat dau hanh trinh don hoc sinh");
-    displayMessage("Bat dau don hoc sinh");
+    sendTFT("Bat dau don hoc sinh");
     delay(500);
   }
 }
@@ -489,7 +477,7 @@ void seatCheckPoint() {
     displayMatrix("Canh bao: ngoi dung cho!");
     Serial.println("[ALERT] So HS > ghe ngoi => Canh bao!");
   } else {
-    displayMessage("Hop le: OK");
+    sendTFT("Hop le: OK");
     Serial.println("[OK] So HS <= ghe hop le");
   }
 }
@@ -499,19 +487,6 @@ void buzz() {
   digitalWrite(BUZZER_PIN, LOW);
   delay(100);
   digitalWrite(BUZZER_PIN, HIGH);
-}
-
-void displayMessage(String msg) {
-  tft.fillScreen(ST77XX_GREEN);
-  tft.setTextSize(2);
-  tft.setTextColor(ST77XX_BLACK);
-  int16_t x1, y1;
-  uint16_t w, h;
-  tft.getTextBounds(msg, 0, 0, &x1, &y1, &w, &h);
-  int16_t x = (tft.width() - w) / 2;
-  int16_t y = (tft.height() - h) / 2;
-  tft.setCursor(x, y);
-  tft.println(msg);
 }
 
 void displayMatrix(String msg) {
@@ -579,4 +554,8 @@ bool waitButtonHold(int pin) {
     }
   }
   return false;
+}
+
+void sendTFT(String msg) {
+  Serial3.println("MSG|" + msg); // Mega gửi lệnh TFT cho Nano
 }
