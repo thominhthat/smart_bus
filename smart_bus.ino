@@ -189,6 +189,7 @@ void loop() {
     if (buttonCount == 2){
     checkNFC();
     }
+    delay(2000);
     checkButton();
     checkTripEnd();
     // CHẠY LIÊN TỤC MỖI 10 GIÂY NẾU ĐANG Ở PHA KIỂM TRA GHẾ
@@ -230,7 +231,7 @@ void checkTripEnd() {
     for (int i = 0; i < NUM_STUDENTS; i++) {
       if (students[i].onboard) onboardCount++;
       float w = loadCells[i].get_units(10);
-      if (w >= -200000 && w <= 0.5) occupiedSeats++;
+      if (abs(w) >= 40) occupiedSeats++;
     }
 
     Serial.print("[TRIP END] So HS con tren xe: "); Serial.println(onboardCount);
@@ -444,13 +445,14 @@ void checkButton_GV() {
   static bool lastState = HIGH;
   bool state = digitalRead(BUTTON_PIN);
   if (state == LOW && lastState == HIGH) {
+    if(teacherReady){
     buttonCount++;
     Serial.print("Button press count: "); Serial.println(buttonCount);
     handleButtonLogic_GV();
     delay(500);
+    }
   }
   lastState = state;
-  
 }
 
 void handleButtonLogic_GV() {
@@ -459,6 +461,7 @@ void handleButtonLogic_GV() {
     buttonCount = 1;
     Serial.println("[B1] Xac nhan bat dau hanh trinh don hoc sinh");
     displayMessage("Bat dau don hoc sinh");
+    delay(500);
   }
 }
 
@@ -469,7 +472,7 @@ void seatCheckPoint() {
 
   for (int i = 0; i < NUM_STUDENTS; i++) {
     float w = loadCells[i].get_units(10);
-    if (w < -100000 && w > -200000) {
+    if (abs(w) >= 40) {
       students[i].seated = true;
       seatedCount++;
     }
@@ -577,4 +580,3 @@ bool waitButtonHold(int pin) {
   }
   return false;
 }
-
