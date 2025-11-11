@@ -5,7 +5,7 @@
   - TFT ST7735 (SPI)
   - MAX7219 LED matrix (MD_Parola)
   - DFPlayer Mini (SoftwareSerial)
-  - SIM800L (Serial2)
+  - SIM800L
   - 1 nút xác nhận
   - Buzzer
 */
@@ -21,6 +21,25 @@
 #include <DFRobotDFPlayerMini.h>
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
+
+/* =================== PROTOTYPES =================== */
+void displayMessage(String msg);
+void displayMatrix(String msg);
+void checkNFC();
+void checkNFC_GV();
+void checkNFC_HS();
+void checkButton();
+void checkButton_GV();
+void handleButtonLogic();
+void handleButtonLogic_GV();
+void seatCheckPoint();
+void sendSMS(const struct Student &s, String msg);
+void callParent(const struct Student &s);
+void callTeacher(String phone);
+void buzz();
+void checkTripEnd();
+void sendSMSTeacher(String phone, String msg);
+bool waitButtonHold(int pin);
 
 /* =================== PIN MAP =================== */
 // TFT (ST7735)
@@ -62,8 +81,10 @@ DFRobotDFPlayerMini mp3;
 bool teacherReady = false;
 bool tripStarted = false;
 bool tripEnded = false;
+bool seatCheckActive = false;
 int totalStudentsOnBoard = 0;
 int buttonCount = 0;
+
 
 /* =================== STUDENT DATA =================== */
 struct Student {
@@ -71,20 +92,20 @@ struct Student {
   String name;
   String grade;
   String parentPhone;
-  String teacherPhone;
   bool onboard;
   bool seated;
 };
 Student students[NUM_STUDENTS] = {
-  {"BF8B08E6", "Nguyen Van A", "1A", "0332081366", "0332081366", false, false},
-  {"9F6706E6", "Le Thi B", "1A", "0332081366", "0332081366", false, false},
-  {"E996C601", "Tran Van C", "1B", "0332081366", "0332081366", false, false},
-  {"3F8F05E6", "Pham Thi D", "1C", "0332081366", "0332081366", false, false},
-  {"3F35F4E5", "Vo Van E", "1B", "0332081366", "0332081366", false, false},
-  {"FF64F6E5", "Do Thi F", "1C", "0332081366", "0332081366", false, false}
+  {"BF8B08E6", "Nguyen Van A", "1A", "0332081366", false, false},
+  {"9F6706E6", "Le Thi B", "1A", "0332081366", false, false},
+  {"E996C601", "Tran Van C", "1B", "0332081366", false, false},
+  {"3F8F05E6", "Pham Thi D", "1C", "0332081366", false, false},
+  {"3F35F4E5", "Vo Van E", "1B", "0332081366", false, false},
+  {"FF64F6E5", "Do Thi F", "1C", "0332081366", false, false}
 };
 
 const String teacherID = "B15DFD03";
+const String teacherbusPhone = "0332081366";
 
 /* =================== SETUP =================== */
 void setup() {
@@ -153,21 +174,148 @@ void setup() {
     Serial.println(F("Hay kiem tra lai ket noi phan cung!"));
     while (1);
   }
+    Serial.println("Giao vien quet the va an nut de bat dau chuong trinh");
 }
 
 /* =================== LOOP =================== */
 void loop() {
-  checkNFC();
-  checkButton();
+
+  if (teacherReady == false || tripStarted == false) {
+    checkNFC_GV();
+    checkButton_GV();
+  } else {
+    if (buttonCount == 2){
+    checkNFC();
+    }
+    checkButton();
+    checkTripEnd();
+    // CHẠY LIÊN TỤC MỖI 10 GIÂY NẾU ĐANG Ở PHA KIỂM TRA GHẾ
+    // =============================
+    static unsigned long lastSeatCheck = 0;
+    unsigned long currentMillis = millis();
+
+    if (seatCheckActive && tripStarted) {
+      if (currentMillis - lastSeatCheck >= 10000) {  // 10 giây
+      lastSeatCheck = currentMillis;
+      seatCheckPoint();
+      }
+    }
+  }
+
+}
+
+/* =================== checkTripEnd =================== */
+void checkTripEnd() {
+  if (!teacherReady && buttonCount == 2 && tripStarted) { // Giáo viên đã xuống xe
+
+    Serial.println("[TRIP END] Giao vien da xuong xe => Xac nhan den diem cuoi (truong).");
+
+    Serial.println("[TRIP END] Bat PN532 de hoc sinh quet the xuong xe...");
+    displayMessage("Hoc sinh xuong xe");
+    delay(1000);
+    checkNFC_HS(); // <-- Thêm dấu ; ở đây
+
+    Serial.println("[TRIP END] Cho nhan nut ket thuc hanh trinh...");
+    while (waitButtonHold(BUTTON_PIN) == LOW); // trước đây
+    
+    Serial.println(">>> Nút đã nhấn xong");
+    tripEnded = true;
+    Serial.println("[TRIP END] Nut duoc nhan -> Bat dau kiem tra toan bo he thong...");
+
+    int onboardCount = 0;
+    int occupiedSeats = 0;
+
+    for (int i = 0; i < NUM_STUDENTS; i++) {
+      if (students[i].onboard) onboardCount++;
+      float w = loadCells[i].read_average(5);
+      if (w >= -200000 && w <= -100000) occupiedSeats++;
+    }
+
+    Serial.print("[TRIP END] So HS con tren xe: "); Serial.println(onboardCount);
+    Serial.print("[TRIP END] So ghe co nguoi hoac do vat: "); Serial.println(occupiedSeats);
+
+    // Trường hợp 1: còn học sinh
+    if (onboardCount > 0) {
+      Serial.println("[TRIP END] CANH BAO: Con hoc sinh tren xe!");
+      displayMatrix("Canh bao: HS bi bo quen!");
+
+      for (int i = 0; i < NUM_STUDENTS; i++) {
+        if (students[i].onboard) {
+          String msg = "Canh bao: Hoc sinh " + students[i].name + " chua xuong xe!";
+          Serial.println("[TRIP END] " + msg);
+          sendSMS(students[i], msg);
+          callParent(students[i]);
+        } 
+      }
+
+      Serial.println("[TRIP END] Phat canh bao lien tuc den khi nhan nut...");
+      while (digitalRead(BUTTON_PIN) == HIGH) {  // chờ nút được nhấn
+        mp3.play(2);                           // phát cảnh báo
+        matrix.displayScroll("Canh bao: HS bi bo quen!", PA_CENTER, PA_SCROLL_LEFT, 50);
+        digitalWrite(FAN_PIN, HIGH);           // bật quạt
+
+        // vòng lặp nhỏ để animate, kiểm tra nút liên tục
+        unsigned long start = millis();
+        while (millis() - start < 1000) {      // thay vì delay dài 5000ms
+          matrix.displayAnimate();
+          if (digitalRead(BUTTON_PIN) == LOW) break; // nếu nhấn nút -> thoát ngay
+          delay(10);
+        }
+
+
+      }
+      Serial.println("[TRIP END] Nut nhan -> ket thuc canh bao.");
+      matrix.displayClear();
+      digitalWrite(FAN_PIN, LOW);
+    }
+
+    // Trường hợp 2: không còn học sinh nhưng loadcell vẫn có người
+    else if (onboardCount == 0 && occupiedSeats > 0) {
+      Serial.println("[TRIP END] CANH BAO: Ghe van co nguoi hoac do vat!");
+      String msg = "Canh bao: Co nguoi hoac do vat bi bo quen tren xe!";
+      displayMatrix("Canh bao: Do vat bi bo quen!");
+      sendSMSTeacher(teacherbusPhone, msg);
+      callTeacher(teacherbusPhone);
+
+      Serial.println("[TRIP END] Phat canh bao lien tuc den khi nhan nut...");
+      while (digitalRead(BUTTON_PIN) == HIGH) {
+        mp3.play(3);
+        matrix.displayScroll("Canh bao: Do vat bi bo quen!", PA_CENTER, PA_SCROLL_LEFT, 50);
+        matrix.displayAnimate();
+        delay(5000);
+        digitalWrite(FAN_PIN, HIGH);
+        // vòng lặp nhỏ để animate, kiểm tra nút liên tục
+        unsigned long start = millis();
+        while (millis() - start < 1000) {      // thay vì delay dài 5000ms
+          matrix.displayAnimate();
+          if (digitalRead(BUTTON_PIN) == LOW) break; // nếu nhấn nút -> thoát ngay
+          delay(10);
+        }
+      }
+      Serial.println("[TRIP END] Nut nhan -> ket thuc canh bao.");
+      matrix.displayClear();
+      digitalWrite(FAN_PIN, LOW);
+    }
+
+    // Trường hợp 3: mọi thứ bình thường
+    else {
+      Serial.println("[TRIP END] Ket thuc hanh trinh an toan.");
+      displayMessage("Ket thuc: An toan");
+    }
+
+    Serial.println("[TRIP END] Hoan tat quy trinh ket thuc hanh trinh.");
+    Serial.println("============================================");
+
+  } else {
+    return;
+  }
 }
 
 /* =================== NFC HANDLING =================== */
 void checkNFC() {
   uint8_t uid[7];
   uint8_t uidLength;
-
   if (!nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength)) return;
-
   String id = "";
   for (uint8_t i = 0; i < uidLength; i++) {
     if (uid[i] < 0x10) id += "0";
@@ -178,7 +326,6 @@ void checkNFC() {
 
   buzz();
 
-  // Giáo viên
   if (id == teacherID) {
     teacherReady = !teacherReady;
     displayMessage(teacherReady ? "Giao vien len xe" : "Giao vien xuong xe");
@@ -187,23 +334,70 @@ void checkNFC() {
     return;
   }
 
-  // Học sinh
   for (int i = 0; i < NUM_STUDENTS; i++) {
     if (students[i].id == id) {
       bool before = students[i].onboard;
       students[i].onboard = !students[i].onboard;
-
       displayMessage(students[i].name + (students[i].onboard ? " len xe" : " xuong xe"));
       Serial.println("[HS] " + students[i].name + (students[i].onboard ? " len xe" : " xuong xe"));
       delay(3000);
 
-      // Ngoại lệ: học sinh xuống sai điểm
       if (before && !students[i].onboard && !tripEnded) {
         String txt = "HS " + students[i].name + " xuong truoc diem dung!";
         Serial.println("[ALERT] " + txt);
         sendSMS(students[i], txt);
         callParent(students[i]);
       }
+      return;
+    }
+  }
+}
+
+void checkNFC_GV() {
+  uint8_t uid[7];
+  uint8_t uidLength;
+  if (!nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength)) return;
+  String id = "";
+  for (uint8_t i = 0; i < uidLength; i++) {
+    if (uid[i] < 0x10) id += "0";
+    id += String(uid[i], HEX);
+  }
+  id.toUpperCase();
+  Serial.println(">>> NFC UID: " + id);
+
+  buzz();
+  if (id == teacherID) {
+    teacherReady = !teacherReady;
+    displayMessage(teacherReady ? "Giao vien len xe" : "Giao vien xuong xe");
+    Serial.println(teacherReady ? "[GV] Len xe" : "[GV] Xuong xe");
+    delay(3000);
+    return;
+  } else {
+    delay(3000);
+    return;
+  }
+}
+
+void checkNFC_HS() {
+  uint8_t uid[7];
+  uint8_t uidLength;
+  if (!nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength)) return;
+  String id = "";
+  for (uint8_t i = 0; i < uidLength; i++) {
+    if (uid[i] < 0x10) id += "0";
+    id += String(uid[i], HEX);
+  }
+  id.toUpperCase();
+  Serial.println(">>> NFC UID: " + id);
+
+  buzz();
+  for (int i = 0; i < NUM_STUDENTS; i++) {
+    if (students[i].id == id) {
+      bool before = students[i].onboard;
+      students[i].onboard = !students[i].onboard;
+      displayMessage(students[i].name + (students[i].onboard ? " len xe" : " xuong xe"));
+      Serial.println("[HS] " + students[i].name + (students[i].onboard ? " len xe" : " xuong xe"));
+      delay(3000);
       return;
     }
   }
@@ -222,23 +416,47 @@ void checkButton() {
   lastState = state;
 }
 
-/* =================== BUTTON LOGIC =================== */
 void handleButtonLogic() {
   if (buttonCount == 1 && teacherReady) {
     tripStarted = true;
     Serial.println("[B1] Xac nhan bat dau hanh trinh don hoc sinh");
     displayMessage("Bat dau don hoc sinh");
+    seatCheckActive = false;
   }
   else if (buttonCount == 2 && tripStarted) {
     Serial.println("[B2] Diem don - Bat PN532 de quet the");
     displayMessage("Diem don hoc sinh");
+    seatCheckActive = false;
   }
   else if (buttonCount == 3 && tripStarted) {
     Serial.println("[B3] Ket thuc diem don - Kiem tra ghe sau 5s");
     displayMessage("Kiem tra ghe...");
     delay(5000);
     seatCheckPoint();
-    buttonCount = 1; // reset để dùng lại cho điểm sau
+    seatCheckActive = true;
+    buttonCount = 1;
+  }
+}
+
+void checkButton_GV() {
+  static bool lastState = HIGH;
+  bool state = digitalRead(BUTTON_PIN);
+  if (state == LOW && lastState == HIGH) {
+    buttonCount++;
+    Serial.print("Button press count: "); Serial.println(buttonCount);
+    handleButtonLogic_GV();
+    delay(500);
+  }
+  lastState = state;
+  
+}
+
+void handleButtonLogic_GV() {
+  if (buttonCount == 1 && teacherReady) {
+    tripStarted = true;
+    buttonCount = 1;
+    Serial.println("[B1] Xac nhan bat dau hanh trinh don hoc sinh");
+    displayMessage("Bat dau don hoc sinh");
   }
 }
 
@@ -248,7 +466,7 @@ void seatCheckPoint() {
   int studentCount = 0;
 
   for (int i = 0; i < NUM_STUDENTS; i++) {
-    float w = loadCells[i].get_units();
+    float w = loadCells[i].read_average(5);
     if (w < -100000 && w > -200000) {
       students[i].seated = true;
       seatedCount++;
@@ -320,3 +538,42 @@ void callParent(const Student &s) {
   SIM.println("ATH");
   Serial.println("[CALL] Goi dien -> " + s.parentPhone);
 }
+
+void callTeacher(String phone) {
+  Serial.print("[CALL TEACHER] Goi dien cho giao vien: ");
+  Serial.println(phone);
+  SIM.print("ATD");
+  SIM.print(phone);
+  SIM.println(";");
+  delay(10000);
+  SIM.println("ATH");
+  Serial.println("[CALL TEACHER] Cuoc goi ket thuc");
+}
+void sendSMSTeacher(String phone, String msg) {
+  SIM.println("AT+CMGF=1");
+  delay(200);
+  SIM.print("AT+CMGS=\"");
+  SIM.print(phone);
+  SIM.println("\"");
+  delay(200);
+  SIM.print(msg);
+  SIM.write(26);
+  delay(3000);
+  Serial.println("[SMS] " + msg + " -> " + phone);
+}
+
+bool waitButtonHold(int pin) {
+  // Chờ nhấn giữ nút
+  if (digitalRead(pin) == LOW) {      // nút nhấn (LOW do INPUT_PULLUP)
+    delay(500);                        // chờ ổn định
+    if (digitalRead(pin) == LOW) {    // xác nhận nhấn
+      while (digitalRead(pin) == LOW) { // đợi thả nút
+        delay(500);                     // loop chậm để tránh CPU bị quá tải
+      }
+      return true;                     // nhấn giữ hoàn tất
+    }
+  }
+  return false;
+}
+
+
