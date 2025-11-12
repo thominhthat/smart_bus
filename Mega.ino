@@ -447,7 +447,6 @@ void seatCheckPoint() {
 
   if (studentCount > seatedCount) {
     mp3.play(1);
-    displayMatrix("Canh bao: ngoi dung cho!");
     logTFT("[ALERT] So HS > ghe ngoi => Canh bao!");
   } else {
     logTFT("[OK] So HS <= ghe hop le");
