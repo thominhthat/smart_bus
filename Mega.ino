@@ -106,7 +106,8 @@ const String teacherbusPhone = "0332081366";
 void setup() {
   Serial.begin(115200);       // để debug qua USB
   Serial3.begin(115200);      // gửi dữ liệu TFT đến Nano
-  logTFT("=== KHOI DONG HE THONG XE DUA DON HOC SINH === Dang khoi dong...");
+  logTFT("=== KHOI DONG HE THONG XE DUA DON HOC SINH ===");
+  logTFT("=== Dang khoi dong... === ");
 
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
