@@ -160,7 +160,7 @@ void setup() {
     while (1);
   }
 
-  logTFT("Giao viên quet the va an nut de bat dau chuong trinh");
+  logTFT("Giao vien quet the va an nut de bat dau chuong trinh");
 }
 
 /* =================== LOOP =================== */
