@@ -195,7 +195,7 @@ void loop() {
 void checkTripEnd() {
   if (!teacherReady && buttonCount == 2 && tripStarted) { // Giáo viên đã xuống xe
 
-    logTFT("[TRIP END] Giao vien da xuong xe => Xac nhan den diem cuoi (truong).");
+    logTFT("[TRIP END] Giao vien da xuong xe => Xac nhan den diem tra hoc sinh.");
 
     logTFT("[TRIP END] Bat PN532 de hoc sinh quet the xuong xe...");
     checkNFC_HS(); 
@@ -391,15 +391,15 @@ void checkButton() {
 void handleButtonLogic() {
   if (buttonCount == 1 && teacherReady) {
     tripStarted = true;
-    logTFT("[B1] Xac nhan bat dau hanh trinh don hoc sinh");
+    logTFT("[B1] Xac nhan bat dau hanh trinh hoc sinh");
     seatCheckActive = false;
   }
   else if (buttonCount == 2 && tripStarted) {
-    logTFT("[B2] Diem don - Bat PN532 de quet the");
+    logTFT("[B2] Diem don/tra hoc sinh - Bat PN532 de quet the");
     seatCheckActive = false;
   }
   else if (buttonCount == 3 && tripStarted) {
-    logTFT("[B3] Ket thuc diem don - Kiem tra ghe sau 5s");
+    logTFT("[B3] Ket thuc diem don/ tra học sinh - Kiem tra ghe sau 5s");
     delay(5000);
     seatCheckPoint();
     seatCheckActive = true;
