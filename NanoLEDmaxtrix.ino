@@ -9,45 +9,27 @@
 
 MD_Parola matrix = MD_Parola(MD_MAX72XX::FC16_HW, MD_PIN_DATA, MD_PIN_CLK, MD_PIN_CS, MAX_DEVICES);
 
-String inputString = "";
-bool newData = false;
-
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(115200);  // Nhận từ Mega
   matrix.begin();
   matrix.setIntensity(4);
   matrix.displayClear();
-
-  Serial.println("Nano 2 ready - LED Matrix receiver");
 }
 
 void loop() {
-  recvWithEndMarker();
-  if (newData) {
-    showOnMatrix(inputString);
-    newData = false;
-  }
-}
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
 
-void recvWithEndMarker() {
-  while (Serial.available()) {
-    char rc = Serial.read();
-    if (rc == '\n') {
-      newData = true;
-      return;
-    } else {
-      inputString += rc;
+    if (cmd == "CLEAR") {
+      matrix.displayClear();
+    } else if (cmd.startsWith("SCROLL:")) {
+      String msg = cmd.substring(7);
+      matrix.displayClear();
+      matrix.displayScroll(msg.c_str(), PA_CENTER, PA_SCROLL_LEFT, 50);
+      unsigned long start = millis();
+      while (millis() - start < 3000) matrix.displayAnimate();
+      matrix.displayClear();
     }
   }
-}
-
-void showOnMatrix(String msg) {
-  Serial.print("Show: ");
-  Serial.println(msg);
-  matrix.displayClear();
-  matrix.displayScroll(msg.c_str(), PA_CENTER, PA_SCROLL_LEFT, 50);
-  unsigned long start = millis();
-  while (millis() - start < 5000) matrix.displayAnimate();
-  matrix.displayClear();
-  inputString = "";
 }
