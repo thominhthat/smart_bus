@@ -320,7 +320,7 @@ void checkNFC() {
       delay(3000);
 
       if (before && !students[i].onboard && !tripEnded) {
-        String txt = "HS " + students[i].name + " xuong truoc diem dung!";
+        String txt = "HS " + students[i].name + " da xuong truoc diem dung cuoi!";
         logTFT("[ALERT] " + txt);
         sendSMS(students[i], txt);
         callParent(students[i]);
