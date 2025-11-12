@@ -171,7 +171,7 @@ void loop() {
     checkNFC_GV();
     checkButton_GV();
   } else {
-    if (buttonCount == 2){
+    if (teacherReady && buttonCount == 2){
       checkNFC();
     }
     delay(2000);
