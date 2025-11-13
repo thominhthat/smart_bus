@@ -20,17 +20,14 @@
 #include <SoftwareSerial.h>
 #include <DFRobotDFPlayerMini.h>
 
-
 /* =================== PROTOTYPES =================== */
-void logTFT(String msg); // <-- Gửi log qua TFT (Nano 1) + Serial
-void sendLED(String msg); // <-- Gửi lệnh LED qua Nano 2
-void checkNFC();
+void logTFT(String msg);
+void sendLED(String msg);
+void checkNFC_once();
 void checkNFC_GV();
 void checkNFC_HS();
 void checkButton();
-void checkButton_GV();
 void handleButtonLogic();
-void handleButtonLogic_GV();
 void seatCheckPoint();
 void sendSMS(const struct Student &s, String msg);
 void callParent(const struct Student &s);
@@ -64,19 +61,28 @@ DFRobotDFPlayerMini mp3;
 #define BUZZER_PIN 27
 #define FAN_PIN 26
 
-// TFT qua Nano 1
+// TFT via Nano 1
 #define TFT_NANO Serial3
 
-// LED qua Nano 2 (SoftwareSerial)
+// LED via Nano 2 (SoftwareSerial)
 SoftwareSerial ledNanoSerial(50, 48); // RX=50, TX=48
 #define LED_NANO ledNanoSerial
 
 /* =================== SYSTEM STATE =================== */
-bool teacherReady = false;
-bool tripStarted = false;
+enum PhaseType {PHASE_NONE, PHASE_PICK, PHASE_DROP};
+enum PhaseStep {STEP_B1, STEP_B1_5, STEP_B2};
+
+PhaseType currentPhase = PHASE_NONE;
+PhaseStep currentStep = STEP_B1;
+PhaseStep previousStep = STEP_B1; // lưu lại B1 hoặc B1.5 trước khi vào B2
+bool phaseStarted = false;
+int teacherScanCount = 0;
 bool tripEnded = false;
+
 bool seatCheckActive = false;
-int totalStudentsOnBoard = 0;
+unsigned long lastSeatCheckMillis = 0;
+const unsigned long SEAT_CHECK_INTERVAL = 10000UL;
+
 int buttonCount = 0;
 float scale[6] = {412.44,593.64,-3417.94,-1168.62,-1357.17,-155.75};
 
@@ -90,24 +96,29 @@ struct Student {
   bool seated;
 };
 Student students[NUM_STUDENTS] = {
-  {"BF8B08E6", "Nguyen Van A", "1A", "0332081366", false, false},
-  {"9F6706E6", "Le Thi B", "1A", "0332081366", false, false},
-  {"E996C601", "Tran Van C", "1B", "0332081366", false, false},
-  {"3F8F05E6", "Pham Thi D", "1C", "0332081366", false, false},
-  {"3F35F4E5", "Vo Van E", "1B", "0332081366", false, false},
-  {"FF64F6E5", "Do Thi F", "1C", "0332081366", false, false}
+  {"3F35F4E5", "Nguyen Van A", "1A", "0332081366", false, false},
+  {"FF64F6E5", "Le Thi B", "1A", "0332081366", false, false},
+  {"3F8F05E6", "Tran Van C", "1B", "0332081366", false, false},
+  {"82350CD5", "Pham Thi D", "1C", "0332081366", false, false},
+  {"BF8B08E6", "Vo Van E", "1B", "0332081366", false, false},
+  {"9F6706E6", "Do Thi F", "1C", "0332081366", false, false}
 };
 
-const String teacherID = "B15DFD03";
+const String teacherPickID = "B15DFD03";
+const String teacherDropID = "E996C601";
 const String teacherbusPhone = "0332081366";
+
+/* =================== NFC read buffer =================== */
+String lastScannedID = "";
+unsigned long lastScanMillis = 0;
+const unsigned long NFC_DEBOUNCE_MS = 800;
 
 /* =================== SETUP =================== */
 void setup() {
-  Serial.begin(115200);       // Debug qua USB
-  TFT_NANO.begin(115200);     // TFT qua Nano 1
-  LED_NANO.begin(115200);     // LED qua Nano 2
+  Serial.begin(115200);
+  TFT_NANO.begin(115200);
+  LED_NANO.begin(115200);
   logTFT("=== KHOI DONG HE THONG XE DUA DON HOC SINH ===");
-  logTFT("=== Dang khoi dong... === ");
 
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
@@ -115,30 +126,19 @@ void setup() {
   digitalWrite(BUZZER_PIN, HIGH);
   digitalWrite(FAN_PIN, LOW);
 
-  // DFPlayer
   mp3Serial.begin(9600);
-  bool dfOK = mp3.begin(mp3Serial);
-  if (dfOK) { mp3.volume(20); logTFT("[OK] DFPlayer ket noi thanh cong"); }
+  if (mp3.begin(mp3Serial)) { mp3.volume(20); logTFT("[OK] DFPlayer ket noi thanh cong"); }
   else logTFT("[ERR] Khong tim thay DFPlayer");
 
-  // SIM800L
   SIM.begin(9600);
   logTFT("[OK] Khoi tao SIM800L xong");
 
-  // PN532
   nfc.begin();
   uint32_t versiondata = nfc.getFirmwareVersion();
-  bool pnOK = true;
-  if (!versiondata) {
-    logTFT("[ERR] PN532 khong ket noi");
-    pnOK = false;
-  } else {
-    nfc.SAMConfig();
-    logTFT("[OK] PN532 ket noi thanh cong");
-  }
+  if (!versiondata) { logTFT("[ERR] PN532 khong ket noi"); while(1); }
+  nfc.SAMConfig();
+  logTFT("[OK] PN532 ket noi thanh cong");
 
-  // HX711
-  bool hxOK = true;
   for (int i = 0; i < NUM_STUDENTS; i++) {
     loadCells[i].begin(HX711_DOUT[i], HX711_SCK[i]);
     loadCells[i].tare();
@@ -147,140 +147,33 @@ void setup() {
   }
   logTFT("[OK] HX711 khoi tao hoan tat");
 
-  // Tong kiem tra phan cung
-  if (dfOK && pnOK && hxOK) {
-    logTFT("Tat ca thiet bi da san sang");
-    delay(1500);
-  } else {
-    logTFT("Loi phan cung! Hay kiem tra lai ket noi phan cung!");
-    while (1);
-  }
-
-  logTFT("Giao vien quet the va an nut de bat dau chuong trinh");
-
+  logTFT("Giao vien quet the (pha don/tra) de bat dau chuong trinh");
 }
 
 /* =================== LOOP =================== */
 void loop() {
-  if (!teacherReady || !tripStarted) {
-    checkNFC_GV();
-    checkButton_GV();
-  } else {
-    if (teacherReady && buttonCount == 2){
-      checkNFC();
-    }
-    delay(2000);
-    checkButton();
-    checkTripEnd();
+  checkNFC_once();
 
-    // CHẠY LIÊN TỤC MỖI 10 GIÂY NẾU ĐANG Ở PHA KIỂM TRA GHẾ
-    static unsigned long lastSeatCheck = 0;
-    unsigned long currentMillis = millis();
+  if (lastScannedID.length() > 0) {
+    if (lastScannedID == teacherPickID || lastScannedID == teacherDropID) checkNFC_GV();
+    else if (phaseStarted && (currentStep == STEP_B1 || currentStep == STEP_B1_5)) checkNFC_HS();
+    lastScannedID = "";
+  }
 
-    if (seatCheckActive && tripStarted) {
-      if (currentMillis - lastSeatCheck >= 10000) {  // 10 giây
-        lastSeatCheck = currentMillis;
-        seatCheckPoint();
-      }
+  checkButton();
+
+  if (phaseStarted && currentStep == STEP_B2) {
+    if (millis() - lastSeatCheckMillis >= SEAT_CHECK_INTERVAL) {
+      lastSeatCheckMillis = millis();
+      seatCheckPoint();
     }
   }
+
+  delay(20);
 }
 
-/* =================== CHECK TRIP END =================== */
-void checkTripEnd() {
-  if (!teacherReady && buttonCount == 2 && tripStarted) { 
-    logTFT("[TRIP END] Giao vien da xuong xe => Xac nhan den diem tra hoc sinh.");
-
-    logTFT("[TRIP END] Bat PN532 de hoc sinh quet the xuong xe...");
-    checkNFC_HS(); 
-
-    logTFT("[TRIP END] Cho nhan nut ket thuc hanh trinh...");
-    while (waitButtonHold(BUTTON_PIN) == LOW); 
-    
-    logTFT(">>> Nút đã nhấn xong");
-    tripEnded = true;
-    logTFT("[TRIP END] Nut duoc nhan -> Bat dau kiem tra toan bo he thong...");
-
-    int onboardCount = 0;
-    int occupiedSeats = 0;
-
-    for (int i = 0; i < NUM_STUDENTS; i++) {
-      if (students[i].onboard) onboardCount++;
-      float w = loadCells[i].get_units(10);
-      if (abs(w) >= 40) occupiedSeats++;
-    }
-
-    logTFT("[TRIP END] So HS con tren xe: " + String(onboardCount));
-    logTFT("[TRIP END] So ghe co nguoi hoac do vat: " + String(occupiedSeats));
-
-    // Trường hợp 1: còn học sinh
-    if (onboardCount > 0) {
-      logTFT("[TRIP END] CANH BAO: Con hoc sinh tren xe!");
-      sendLED("SCROLL:Canh bao: HS bi bo quen!");
-
-      for (int i = 0; i < NUM_STUDENTS; i++) {
-        if (students[i].onboard) {
-          String msg = "Canh bao: Hoc sinh " + students[i].name + " chua xuong xe!";
-          logTFT("[TRIP END] " + msg);
-          sendSMS(students[i], msg);
-          callParent(students[i]);
-        } 
-      }
-
-      logTFT("[TRIP END] Phat canh bao lien tuc den khi nhan nut...");
-      while (digitalRead(BUTTON_PIN) == HIGH) {  
-        mp3.play(2);                           
-        sendLED("SCROLL:Canh bao: HS bi bo quen!");
-        digitalWrite(FAN_PIN, HIGH);           
-
-        unsigned long start = millis();
-        while (millis() - start < 1000) {      
-          if (digitalRead(BUTTON_PIN) == LOW) break; 
-          delay(10);
-        }
-      }
-      logTFT("[TRIP END] Nut nhan -> ket thuc canh bao.");
-      sendLED("CLEAR");
-      digitalWrite(FAN_PIN, LOW);
-    }
-
-    // Trường hợp 2: không còn học sinh nhưng loadcell vẫn có người
-    else if (onboardCount == 0 && occupiedSeats > 0) {
-      logTFT("[TRIP END] CANH BAO: Ghe van co nguoi hoac do vat!");
-      String msg = "Canh bao: Co nguoi hoac do vat bi bo quen tren xe!";
-      sendLED("SCROLL:Canh bao: Do vat bi bo quen!");
-      sendSMSTeacher(teacherbusPhone, msg);
-      callTeacher(teacherbusPhone);
-
-      logTFT("[TRIP END] Phat canh bao lien tuc den khi nhan nut...");
-      while (digitalRead(BUTTON_PIN) == HIGH) {
-        mp3.play(3);
-        sendLED("SCROLL:Canh bao: Do vat bi bo quen!");
-        delay(5000);
-        digitalWrite(FAN_PIN, HIGH);
-        unsigned long start = millis();
-        while (millis() - start < 1000) {      
-          if (digitalRead(BUTTON_PIN) == LOW) break; 
-          delay(10);
-        }
-      }
-      logTFT("[TRIP END] Nut nhan -> ket thuc canh bao.");
-      sendLED("CLEAR");
-      digitalWrite(FAN_PIN, LOW);
-    }
-
-    // Trường hợp 3: mọi thứ bình thường
-    else {
-      logTFT("[TRIP END] Ket thuc hanh trinh an toan.");
-    }
-
-    logTFT("[TRIP END] Hoan tat quy trinh ket thuc hanh trinh.");
-    logTFT("============================================");
-  } else return;
-}
-
-/* =================== NFC HANDLING =================== */
-void checkNFC() {
+/* =================== NFC read (debounced) =================== */
+void checkNFC_once() {
   uint8_t uid[7];
   uint8_t uidLength;
   if (!nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength)) return;
@@ -290,130 +183,116 @@ void checkNFC() {
     id += String(uid[i], HEX);
   }
   id.toUpperCase();
+  if (millis() - lastScanMillis < NFC_DEBOUNCE_MS) return;
+  lastScanMillis = millis();
+  lastScannedID = id;
+}
 
+/* =================== TEACHER NFC HANDLING =================== */
+void checkNFC_GV() {
+  String id = lastScannedID;
   buzz();
 
-  if (id == teacherID) {
-    teacherReady = !teacherReady;
-    logTFT(teacherReady ? "Giao vien len xe" : "Giao vien xuong xe");
-    delay(3000);
+  if (!phaseStarted) {
+    if (id == teacherPickID) { currentPhase = PHASE_PICK; phaseStarted = true; currentStep = STEP_B1; previousStep = STEP_B1; teacherScanCount=1; tripEnded=false; seatCheckActive=false; logTFT("Giao vien xac nhan PHA DON -> [B1] cho HS quet"); return; }
+    if (id == teacherDropID) { currentPhase = PHASE_DROP; phaseStarted = true; currentStep = STEP_B1; previousStep = STEP_B1; teacherScanCount=1; tripEnded=false; seatCheckActive=false; logTFT("Giao vien xac nhan PHA TRA -> [B1] cho HS quet"); return; }
+  }
+
+  if (currentPhase == PHASE_PICK && currentStep == STEP_B1 && id == teacherDropID) {
+    currentStep = STEP_B1_5;
+    logTFT("Chuyen sang B1.5 (khong canh bao HS xuong truoc diem dung)");
     return;
   }
 
+  if (currentPhase == PHASE_PICK && currentStep == STEP_B1_5 && id == teacherPickID) {
+    currentStep = STEP_B1;
+    logTFT("Chuyen ve B1");
+    return;
+  }
+
+  if (currentStep == STEP_B1) {
+    if ((currentPhase == PHASE_PICK && id == teacherPickID) || (currentPhase == PHASE_DROP && id == teacherDropID)) {
+      teacherScanCount++;
+      logTFT("Giao vien quet lan thu " + String(teacherScanCount));
+      if (teacherScanCount >= 2) {
+        checkTripEnd();
+        currentPhase = PHASE_NONE; currentStep = STEP_B1; previousStep=STEP_B1; phaseStarted=false; teacherScanCount=0; seatCheckActive=false;
+      }
+      return;
+    } else {
+      logTFT("Giao vien quet the (khac pha hien tai) - bi bo qua");
+      return;
+    }
+  } else {
+    logTFT("Giao vien quet the khi o B2 - khong ket thuc hanh trinh");
+    return;
+  }
+}
+
+/* =================== STUDENT NFC HANDLING (co canh bao HS xuong som) =================== */
+void checkNFC_HS() {
+  String id = lastScannedID;
+  buzz();
   for (int i = 0; i < NUM_STUDENTS; i++) {
     if (students[i].id == id) {
       bool before = students[i].onboard;
       students[i].onboard = !students[i].onboard;
       logTFT(students[i].name + (students[i].onboard ? " len xe" : " xuong xe"));
-      delay(3000);
-
-      if (before && !students[i].onboard && !tripEnded) {
-        String txt = "HS " + students[i].name + " da xuong truoc diem dung cuoi!";
+      
+      // Cảnh báo HS xuống trước điểm dừng
+      if (currentPhase == PHASE_PICK && currentStep == STEP_B1 && before && !students[i].onboard) {
+        String txt = "HS " + students[i].name + " da xuong truoc diem dung!";
         logTFT("[ALERT] " + txt);
+
+        // 1. Gửi SMS + gọi phụ huynh
         sendSMS(students[i], txt);
         callParent(students[i]);
+
+        // 2. Phát cảnh báo liên tục đến khi nhấn nút
+        logTFT("[ALERT] Phat canh bao lien tuc den khi nhan nut...");
+        while (digitalRead(BUTTON_PIN) == HIGH) {
+          mp3.play(4); // file cảnh báo HS xuống sớm
+          sendLED("SCROLL:HS xuong truoc diem dung!");
+          digitalWrite(FAN_PIN, HIGH);
+          delay(5000);
+        }
+
+        // 3. Khi nút được nhấn -> dừng cảnh báo
+        logTFT("[ALERT] Nut nhan -> ket thuc canh bao, tiep tuc hanh trinh");
+        sendLED("CLEAR");
+        digitalWrite(FAN_PIN, LOW);
+
+        // 4. Chuyển sang B2 như bình thường
+        handleButtonLogic();
       }
+      
       return;
     }
   }
-}
-
-void checkNFC_GV() {
-  uint8_t uid[7];
-  uint8_t uidLength;
-  if (!nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength)) return;
-  String id = "";
-  for (uint8_t i = 0; i < uidLength; i++) {
-    if (uid[i] < 0x10) id += "0";
-    id += String(uid[i], HEX);
-  }
-  id.toUpperCase();
-
-  buzz();
-  if (id == teacherID) {
-    teacherReady = !teacherReady;
-    logTFT(teacherReady ? "Giao vien len xe" : "Giao vien xuong xe");
-    delay(3000);
-    return;
-  } else {
-    delay(3000);
-    return;
-  }
-}
-
-void checkNFC_HS() {
-  uint8_t uid[7];
-  uint8_t uidLength;
-  if (!nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength)) return;
-  String id = "";
-  for (uint8_t i = 0; i < uidLength; i++) {
-    if (uid[i] < 0x10) id += "0";
-    id += String(uid[i], HEX);
-  }
-  id.toUpperCase();
-
-  buzz();
-  for (int i = 0; i < NUM_STUDENTS; i++) {
-    if (students[i].id == id) {
-      bool before = students[i].onboard;
-      students[i].onboard = !students[i].onboard;
-      logTFT(students[i].name + (students[i].onboard ? " len xe" : " xuong xe"));
-      delay(3000);
-      return;
-    }
-  }
+  logTFT("[NFC] The khong hop le: " + id);
 }
 
 /* =================== BUTTON HANDLING =================== */
 void checkButton() {
   static bool lastState = HIGH;
   bool state = digitalRead(BUTTON_PIN);
-  if (state == LOW && lastState == HIGH) {
-    buttonCount++;
-    handleButtonLogic();
-    delay(500);
-  }
+  if (state == LOW && lastState == HIGH) { buzz(); handleButtonLogic(); delay(250); }
   lastState = state;
 }
 
 void handleButtonLogic() {
-  if (buttonCount == 1 && teacherReady) {
-    tripStarted = true;
-    logTFT("[B1] Xac nhan bat dau hanh trinh hoc sinh");
-    seatCheckActive = false;
-  }
-  else if (buttonCount == 2 && tripStarted) {
-    logTFT("[B2] Diem don/tra hoc sinh - Bat PN532 de quet the");
-    seatCheckActive = false;
-  }
-  else if (buttonCount == 3 && tripStarted) {
-    logTFT("[B3] Ket thuc diem don/ tra học sinh - Kiem tra ghe sau 5s");
-    delay(5000);
-    seatCheckPoint();
+  if (!phaseStarted) { logTFT("Nut nhan nhung chua co giao vien xac nhan (bo qua)"); return; }
+
+  if (currentStep == STEP_B1 || currentStep == STEP_B1_5) {
+    previousStep = currentStep;  // lưu lại bước hiện tại trước khi vào B2
+    currentStep = STEP_B2;
     seatCheckActive = true;
-    buttonCount = 1;
-  }
-}
-
-void checkButton_GV() {
-  static bool lastState = HIGH;
-  bool state = digitalRead(BUTTON_PIN);
-  if (state == LOW && lastState == HIGH) {
-    if(teacherReady){
-      buttonCount++;
-      handleButtonLogic_GV();
-      delay(500);
-    }
-  }
-  lastState = state;
-}
-
-void handleButtonLogic_GV() {
-  if (buttonCount == 1 && teacherReady) {
-    tripStarted = true;
-    buttonCount = 1;
-    logTFT("[B1] Xac nhan bat dau hanh trinh don hoc sinh");
-    delay(500);
+    lastSeatCheckMillis = millis();
+    logTFT("[B2] Di chuyen - Kiem tra ghe lien tuc (NFC HS tam dung)");
+  } else if (currentStep == STEP_B2) {
+    currentStep = previousStep; // quay về đúng B1 hoặc B1.5
+    seatCheckActive = false;
+    logTFT((currentStep == STEP_B1 ? "[B1]" : "[B1.5]") + String(" Den diem tiep theo - Bat NFC HS"));
   }
 }
 
@@ -421,88 +300,74 @@ void handleButtonLogic_GV() {
 void seatCheckPoint() {
   int seatedCount = 0;
   int studentCount = 0;
-
   for (int i = 0; i < NUM_STUDENTS; i++) {
     float w = loadCells[i].get_units(10);
-    if (abs(w) >= 40) {
-      students[i].seated = true;
-      seatedCount++;
-    }
+    if (abs(w) >= 40) { students[i].seated = true; seatedCount++; }
     if (students[i].onboard) studentCount++;
   }
-
   logTFT("[CHECK] Ghe co nguoi: " + String(seatedCount) + " / HS tren xe: " + String(studentCount));
-
   if (studentCount > seatedCount) {
     mp3.play(1);
     logTFT("[ALERT] So HS > ghe ngoi => Canh bao!");
     sendLED("SCROLL:So HS > ghe ngoi!");
-  } else {
-    logTFT("[OK] So HS <= ghe hop le");
-    sendLED("CLEAR");
+  } else { logTFT("[OK] So HS <= ghe hop le"); sendLED("CLEAR"); }
+}
+
+/* =================== CHECK TRIP END =================== */
+void checkTripEnd() {
+  logTFT("[TRIP END] Kiem tra toan bo he thong...");
+  tripEnded = true;
+
+  int onboardCount = 0;
+  int occupiedSeats = 0;
+
+  for (int i = 0; i < NUM_STUDENTS; i++) {
+    if (students[i].onboard) onboardCount++;
+    float w = loadCells[i].get_units(10);
+    if (abs(w) >= 40) occupiedSeats++;
   }
+
+  logTFT("[TRIP END] So HS con tren xe: " + String(onboardCount));
+  logTFT("[TRIP END] So ghe co nguoi hoac do vat: " + String(occupiedSeats));
+
+  if (onboardCount > 0) {
+    logTFT("[TRIP END] CANH BAO: Con hoc sinh tren xe!");
+    sendLED("SCROLL:Canh bao: HS bi bo quen!");
+    digitalWrite(FAN_PIN, HIGH);
+    for (int i = 0; i < NUM_STUDENTS; i++) if (students[i].onboard) { String msg = "Canh bao: Hoc sinh " + students[i].name + " chua xuong xe!"; logTFT("[TRIP END] " + msg); sendSMS(students[i], msg); callParent(students[i]); }
+
+    logTFT("[TRIP END] Phat canh bao lien tuc den khi nhan nut...");
+    while (digitalRead(BUTTON_PIN) == HIGH) { mp3.play(2); sendLED("SCROLL:Canh bao: HS bi bo quen!"); digitalWrite(FAN_PIN,HIGH); delay(5000); }
+    logTFT("[TRIP END] Nut nhan -> ket thuc canh bao.");
+    sendLED("CLEAR"); digitalWrite(FAN_PIN, LOW);
+  } else if (onboardCount == 0 && occupiedSeats > 0) {
+    logTFT("[TRIP END] CANH BAO: Ghe van co nguoi hoac do vat!");
+    String msg = "Canh bao: Co nguoi hoac do vat bi bo quen tren xe!";
+    sendLED("SCROLL:Canh bao: Do vat bi bo quen!");
+    sendSMSTeacher(teacherbusPhone, msg);
+    callTeacher(teacherbusPhone);
+
+    logTFT("[TRIP END] Phat canh bao lien tuc den khi nhan nut...");
+    while (digitalRead(BUTTON_PIN) == HIGH) { mp3.play(3); sendLED("SCROLL:Canh bao: Do vat bi bo quen!"); delay(5000); digitalWrite(FAN_PIN,HIGH); }
+    logTFT("[TRIP END] Nut nhan -> ket thuc canh bao.");
+    sendLED("CLEAR"); digitalWrite(FAN_PIN, LOW);
+  } else {
+    logTFT("[TRIP END] Ket thuc hanh trinh an toan.");
+  }
+
+  logTFT("[TRIP END] Hoan tat quy trinh ket thuc hanh trinh.");
+  logTFT("============================================");
+
+  for (int i = 0; i < NUM_STUDENTS; i++) { students[i].onboard=false; students[i].seated=false; }
 }
 
 /* =================== HELPER FUNCTIONS =================== */
-void buzz() {
-  digitalWrite(BUZZER_PIN, LOW);
-  delay(100);
-  digitalWrite(BUZZER_PIN, HIGH);
-}
-
-void sendLED(String msg) {
-  LED_NANO.println(msg);
-}
-
-void sendTFT(String msg) {
-  TFT_NANO.println(msg); 
-}
-
-void logTFT(String msg) {
-  Serial.println(msg);
-  sendTFT(msg);
-  delay(2500);
-}
-
-void sendSMS(const Student &s, String msg) {
-  SIM.println("AT+CMGF=1");
-  delay(200);
-  SIM.println("AT+CMGS=\"" + s.parentPhone + "\"");
-  delay(200);
-  SIM.println(msg);
-  SIM.write(26);
-  delay(2000);
-}
-
-void callParent(const Student &s) {
-  SIM.println("ATD" + s.parentPhone + ";");
-  delay(3000);
-  SIM.println("ATH");
-  delay(1000);
-}
-
-void callTeacher(String phone) {
-  SIM.println("ATD" + phone + ";");
-  delay(3000);
-  SIM.println("ATH");
-  delay(1000);
-}
-
-void sendSMSTeacher(String phone, String msg) {
-  SIM.println("AT+CMGF=1");
-  delay(200);
-  SIM.println("AT+CMGS=\"" + phone + "\"");
-  delay(200);
-  SIM.println(msg);
-  SIM.write(26);
-  delay(2000);
-}
-
-bool waitButtonHold(int pin) {
-  int state = digitalRead(pin);
-  while (state == HIGH) {
-    state = digitalRead(pin);
-    delay(50);
-  }
-  return state;
-}
+void buzz() { digitalWrite(BUZZER_PIN, LOW); delay(100); digitalWrite(BUZZER_PIN, HIGH); }
+void sendLED(String msg) { LED_NANO.println(msg); }
+void sendTFT(String msg) { TFT_NANO.println(msg); }
+void logTFT(String msg) { Serial.println(msg); sendTFT(msg); delay(250); }
+void sendSMS(const Student &s, String msg) { SIM.println("AT+CMGF=1"); delay(200); SIM.println("AT+CMGS=\"" + s.parentPhone + "\""); delay(200); SIM.println(msg); SIM.write(26); delay(2000); }
+void callParent(const Student &s) { SIM.println("ATD" + s.parentPhone + ";"); delay(3000); SIM.println("ATH"); delay(1000); }
+void callTeacher(String phone) { SIM.println("ATD" + phone + ";"); delay(3000); SIM.println("ATH"); delay(1000); }
+void sendSMSTeacher(String phone, String msg) { SIM.println("AT+CMGF=1"); delay(200); SIM.println("AT+CMGS=\"" + phone + "\""); delay(200); SIM.println(msg); SIM.write(26); delay(2000); }
+bool waitButtonHold(int pin) { int state=digitalRead(pin); while(state==HIGH){state=digitalRead(pin);delay(50);} return state; }
