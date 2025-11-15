@@ -2,7 +2,7 @@
 #include <Adafruit_ST7735.h>
 #include <Fonts/FreeSans9pt7b.h>
 
-Adafruit_ST7735 tft = Adafruit_ST7735(10, 9, 8);
+Adafruit_ST7735 tft = Adafruit_ST7735(6, 5, 4);
 
 #define SCREEN_W 128
 #define SCREEN_H 160
