@@ -47,7 +47,7 @@ void processCommand(String cmd) {
     matrix.displayClear();
     matrix.displayScroll(msg.c_str(), PA_CENTER, PA_SCROLL_LEFT, 50);
     unsigned long start = millis();
-    while (millis() - start < 3000) matrix.displayAnimate();
+    while (millis() - start < 15000) matrix.displayAnimate();
     matrix.displayClear();
   } else if (cmd == "CLEAR") {
     matrix.displayClear();
