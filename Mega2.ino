@@ -22,6 +22,7 @@
 
 /* =================== PROTOTYPES =================== */
 void logTFT(String msg);
+void logTFT_Khoidong(String msg);
 void sendLED(String msg);
 void checkNFC_once();
 void checkNFC_GV();
@@ -96,17 +97,17 @@ struct Student {
   bool seated;
 };
 Student students[NUM_STUDENTS] = {
-  {"3F35F4E5", "Nguyen Van A", "1A", "0332081366", false, false},
-  {"FF64F6E5", "Le Thi B", "1A", "0332081366", false, false},
-  {"3F8F05E6", "Tran Van C", "1B", "0332081366", false, false},
-  {"82350CD5", "Pham Thi D", "1C", "0332081366", false, false},
-  {"BF8B08E6", "Vo Van E", "1B", "0332081366", false, false},
-  {"9F6706E6", "Do Thi F", "1C", "0332081366", false, false}
+  {"3F35F4E5", "Nguyen Van A", "1A", "0862853461", false, false},
+  {"FF64F6E5", "Le Thi B", "1A", "0862853461", false, false},
+  {"3F8F05E6", "Tran Van C", "1B", "0862853461", false, false},
+  {"82350CD5", "Pham Thi D", "1C", "0945721601", false, false},
+  {"BF8B08E6", "Vo Van E", "1B", "0945721601", false, false},
+  {"9F6706E6", "Do Thi F", "1C", "0945721601", false, false}
 };
 
 const String teacherPickID = "B15DFD03";
 const String teacherDropID = "E996C601";
-const String teacherbusPhone = "0332081366";
+const String teacherbusPhone = "0946626711";
 
 /* =================== NFC read buffer =================== */
 String lastScannedID = "";
@@ -127,17 +128,17 @@ void setup() {
   digitalWrite(FAN_PIN, LOW);
 
   mp3Serial.begin(9600);
-  if (mp3.begin(mp3Serial)) { mp3.volume(20); logTFT("[OK] DFPlayer ket noi thanh cong"); }
-  else logTFT("[ERR] Khong tim thay DFPlayer");
+  if (mp3.begin(mp3Serial)) { mp3.volume(30); logTFT_Khoidong("[OK] DFPlayer ket noi thanh cong"); }
+  else logTFT_Khoidong("[ERR] Khong tim thay DFPlayer");
 
   SIM.begin(9600);
-  logTFT("[OK] Khoi tao SIM800L xong");
+  logTFT_Khoidong("[OK] Khoi tao SIM800L xong");
 
   nfc.begin();
   uint32_t versiondata = nfc.getFirmwareVersion();
-  if (!versiondata) { logTFT("[ERR] PN532 khong ket noi"); while(1); }
+  if (!versiondata) { logTFT_Khoidong("[ERR] PN532 khong ket noi"); while(1); }
   nfc.SAMConfig();
-  logTFT("[OK] PN532 ket noi thanh cong");
+  logTFT_Khoidong("[OK] PN532 ket noi thanh cong");
 
   for (int i = 0; i < NUM_STUDENTS; i++) {
     loadCells[i].begin(HX711_DOUT[i], HX711_SCK[i]);
@@ -145,9 +146,9 @@ void setup() {
     loadCells[i].set_scale(scale[i]);
     delay(50);
   }
-  logTFT("[OK] HX711 khoi tao hoan tat");
+  logTFT_Khoidong("[OK] HX711 khoi tao hoan tat");
 
-  logTFT("Giao vien quet the (pha don/tra) de bat dau chuong trinh");
+  logTFT("Giao vien quet the (pha don/tra) de bat dau");
 }
 
 /* =================== LOOP =================== */
@@ -281,7 +282,7 @@ void checkButton() {
 }
 
 void handleButtonLogic() {
-  if (!phaseStarted) { logTFT("Nut nhan nhung chua co giao vien xac nhan (bo qua)"); return; }
+  if (!phaseStarted) { logTFT_Khoidong("Nut nhan nhung chua co giao vien xac nhan (bo qua)"); return; }
 
   if (currentStep == STEP_B1 || currentStep == STEP_B1_5) {
     previousStep = currentStep;  // lưu lại bước hiện tại trước khi vào B2
@@ -348,7 +349,7 @@ void checkTripEnd() {
     callTeacher(teacherbusPhone);
 
     logTFT("[TRIP END] Phat canh bao lien tuc den khi nhan nut...");
-    while (digitalRead(BUTTON_PIN) == HIGH) { mp3.play(3); sendLED("SCROLL:Canh bao: Do vat bi bo quen!"); delay(5000); digitalWrite(FAN_PIN,HIGH); }
+    while (digitalRead(BUTTON_PIN) == HIGH) { mp3.play(3); sendLED("SCROLL:Canh bao: Do vat bi bo quen!"); delay(7000); digitalWrite(FAN_PIN,HIGH); }
     logTFT("[TRIP END] Nut nhan -> ket thuc canh bao.");
     sendLED("CLEAR"); digitalWrite(FAN_PIN, LOW);
   } else {
@@ -365,7 +366,8 @@ void checkTripEnd() {
 void buzz() { digitalWrite(BUZZER_PIN, LOW); delay(100); digitalWrite(BUZZER_PIN, HIGH); }
 void sendLED(String msg) { LED_NANO.println(msg); }
 void sendTFT(String msg) { TFT_NANO.println(msg); }
-void logTFT(String msg) { Serial.println(msg); sendTFT(msg); delay(250); }
+void logTFT(String msg) { Serial.println(msg); sendTFT(msg); sendLED("SCROLL:" + msg); delay(250); }
+void logTFT_Khoidong(String msg) { Serial.println(msg); sendTFT(msg); delay(250); }
 void sendSMS(const Student &s, String msg) { SIM.println("AT+CMGF=1"); delay(200); SIM.println("AT+CMGS=\"" + s.parentPhone + "\""); delay(200); SIM.println(msg); SIM.write(26); delay(2000); }
 void callParent(const Student &s) { SIM.println("ATD" + s.parentPhone + ";"); delay(3000); SIM.println("ATH"); delay(1000); }
 void callTeacher(String phone) { SIM.println("ATD" + phone + ";"); delay(3000); SIM.println("ATH"); delay(1000); }
